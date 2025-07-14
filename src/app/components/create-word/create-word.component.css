@@ -1,0 +1,12 @@
+/* create-word-item.component.css */
+.drag-active {
+  @apply border-indigo-500 bg-indigo-50;
+}
+
+.file-upload-label {
+  @apply cursor-pointer transition duration-150 ease-in-out;
+}
+
+.file-upload-label:hover {
+  @apply text-indigo-500;
+}

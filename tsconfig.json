@@ -3,6 +3,7 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
+    "lib": ["es2020", "dom"],
     "outDir": "./dist/out-tsc",
     "strict": true,
     "noImplicitOverride": true,

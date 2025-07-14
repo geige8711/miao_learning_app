@@ -1,0 +1,91 @@
+<div class="min-h-screen bg-gray-50 p-8">
+  <div class="max-w-2xl mx-auto bg-white rounded-xl shadow-md overflow-hidden">
+    <div *ngIf="isLoading" class="p-8 flex justify-center">
+      <div
+        class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"
+      ></div>
+    </div>
+
+    <div *ngIf="!isLoading && words.length > 0" class="p-8">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-semibold text-gray-700">
+          Word {{ currentIndex + 1 }} of {{ words.length }}
+        </h2>
+        <button
+          (click)="finishLearning()"
+          class="text-sm text-gray-500 hover:text-gray-700"
+        >
+          Exit
+        </button>
+      </div>
+
+      <div class="text-center mb-8">
+        <div class="text-4xl font-bold text-indigo-600 mb-6 py-12 border-b">
+          {{ currentWord?.item }}
+        </div>
+
+        <div *ngIf="showAnswer" class="mt-6 text-left space-y-4">
+          <div>
+            <h3 class="text-sm font-medium text-gray-500">Meaning</h3>
+            <p class="mt-1 text-lg">{{ currentWord?.meaning }}</p>
+          </div>
+
+          <div *ngIf="currentWord?.examples?.length">
+            <h3 class="text-sm font-medium text-gray-500">Examples</h3>
+            <ul class="mt-1 space-y-2">
+              <li *ngFor="let example of currentWord.examples" class="text-lg">
+                "{{ example.sentence }}"
+              </li>
+            </ul>
+          </div>
+
+          <div *ngIf="currentWord?.images?.length" class="mt-4">
+            <h3 class="text-sm font-medium text-gray-500">Images</h3>
+            <div class="grid grid-cols-2 gap-4 mt-2">
+              <img
+                *ngFor="let image of currentWord.images"
+                [src]="image.url"
+                alt="Word illustration"
+                class="rounded-lg object-contain h-32 w-full"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div *ngIf="!showAnswer" class="mt-12">
+          <button
+            (click)="showMeaning()"
+            class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+          >
+            Show Answer
+          </button>
+        </div>
+
+        <div *ngIf="showAnswer" class="mt-8 flex justify-center gap-4">
+          <button
+            (click)="nextWord(false)"
+            class="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600"
+          >
+            Don't Know
+          </button>
+          <button
+            (click)="nextWord(true)"
+            class="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600"
+          >
+            {{ currentIndex < words.length - 1 ? "Next" : "Finish" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="!isLoading && words.length === 0" class="p-8 text-center">
+      <p class="text-gray-500">No words found in this tag</p>
+      <button
+        (click)="finishLearning()"
+        class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+      >
+        Back to Tags
+      </button>
+    </div>
+  </div>
+</div>
