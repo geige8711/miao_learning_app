@@ -6,6 +6,14 @@ import { catchError, map, switchMap } from 'rxjs/operators';
 import { Tag, WordItem, CreateWordItemInput } from '../../types/word.types';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { environment } from '../../environments/environment';
+import {
+  Category,
+  QuizOptionInput,
+  QuizOption,
+  Quiz,
+  QuizCreateInput,
+  CategoryWithQuizzes,
+} from '../../types/quiz.types';
 
 @Injectable({
   providedIn: 'root',
@@ -14,7 +22,29 @@ export class GraphqlService {
   private hygraphUrl = environment.hygraphUrl;
   private hygraphToken = environment.hygraphToken;
 
+  private headers = new HttpHeaders({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${environment.hygraphToken}`,
+  });
+
   constructor(private apollo: Apollo, private http: HttpClient) {}
+
+  private executeQuery<T>(query: string, variables?: any): Observable<T> {
+    return this.http
+      .post<{ data: T; errors?: any[] }>(
+        environment.hygraphUrl,
+        { query, variables },
+        { headers: this.headers }
+      )
+      .pipe(
+        map((response) => {
+          if (response.errors) {
+            throw new Error(response.errors.map((e) => e.message).join('\n'));
+          }
+          return response.data;
+        })
+      );
+  }
   createAsset(file: File, fileName?: string): Observable<any> {
     const mutation = gql`
       mutation CreateAsset($data: AssetCreateInput!) {
@@ -432,5 +462,281 @@ export class GraphqlService {
         variables: { id: wordItemId, isCollected },
       })
       .pipe(map((result) => result.data!.updateWordItem));
+  }
+
+  // Category methods
+  getCategories(): Observable<Category[]> {
+    const GET_CATEGORIES = gql`
+      query GetCategories {
+        categories {
+          id
+          categoryName
+        }
+      }
+    `;
+
+    return this.apollo
+      .query<{ categories: Category[] }>({
+        query: GET_CATEGORIES,
+      })
+      .pipe(map((result) => result.data.categories));
+  }
+
+  // Quiz Option methods
+  createQuizOption(quizOptionData: QuizOptionInput): Observable<QuizOption> {
+    const CREATE_QUIZ_OPTION = gql`
+      mutation CreateQuizOption($data: QuizOptionCreateInput!) {
+        createQuizOption(data: $data) {
+          id
+          quizOptionText
+          optionImage {
+            url
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ createQuizOption: QuizOption }>({
+        mutation: CREATE_QUIZ_OPTION,
+        variables: {
+          data: {
+            quizOptionText: quizOptionData.quizOptionText,
+            optionImage: quizOptionData.optionImage
+              ? { id: quizOptionData.optionImage }
+              : null,
+          },
+        },
+      })
+      .pipe(map((result) => result.data!.createQuizOption));
+  }
+
+  // Quiz methods
+  getQuizzesByCategory(categoryId: string): Observable<Quiz[]> {
+    const GET_QUIZZES_BY_CATEGORY = gql`
+      query GetQuizzesByCategory($categoryId: ID!) {
+        category(where: { id: $categoryId }) {
+          categoryName
+          id
+          quiz {
+            id
+            quizContent
+            quizImages {
+              url
+            }
+            quizOptions {
+              ... on QuizOption {
+                quizOptionText
+                optionImage {
+                  url
+                }
+              }
+            }
+            correctAnswer
+            isCollected
+            viewTime
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .query<{ category: { quiz: Quiz[] } }>({
+        query: GET_QUIZZES_BY_CATEGORY,
+        variables: { categoryId },
+      })
+      .pipe(
+        map((result) => {
+          if (!result.data?.category?.quiz) {
+            throw new Error('No quizzes found for this category');
+          }
+          return result.data.category.quiz.map((quiz) => ({
+            ...quiz,
+            // Ensure quizOptions is always an array and includes 'id'
+            quizOptions:
+              quiz.quizOptions?.map((option) => ({
+                id: option.id,
+                quizOptionText: option.quizOptionText,
+                optionImage: option.optionImage || undefined,
+              })) || [],
+          }));
+        })
+      );
+  }
+
+  getCategoriesWithIncorrectQuizzes(): Observable<CategoryWithQuizzes[]> {
+    const query = `
+      query GetCategoriesWithIncorrectQuizzes {
+        categories(where: { quiz_some: { isCollected: true } }) {
+          id
+          categoryName
+          quiz(where: { isCollected: true }) {
+            id
+            quizContent
+            quizImages {
+              url
+            }
+            quizOptions {
+              ... on QuizOption {
+                quizOptionText
+                optionImage {
+                  url
+                }
+              }
+            }
+            correctAnswer
+            isCollected
+            viewTime
+          }
+        }
+      }
+    `;
+
+    return this.executeQuery<{ categories: CategoryWithQuizzes[] }>(query).pipe(
+      map((result) => {
+        const categoriesWithQuizzes = (result.categories || [])
+          .filter((category) => category.quiz && category.quiz.length > 0)
+          .map((category) => ({
+            ...category,
+            quiz: category.quiz.map((quiz) => ({
+              ...quiz,
+              quizOptions: quiz.quizOptions || [],
+            })),
+          }));
+
+        if (categoriesWithQuizzes.length === 0) {
+          throw new Error('No categories found with incorrect quizzes');
+        }
+        return categoriesWithQuizzes;
+      }),
+      catchError((error) => {
+        console.error(
+          'Error fetching categories with incorrect quizzes:',
+          error
+        );
+        return of([]);
+      })
+    );
+  }
+
+  getIncorrectQuizzes(): Observable<Quiz[]> {
+    const GET_INCORRECT_QUIZZES = gql`
+      query GetIncorrectQuizzes {
+        quizzes(where: { isCollected: true }) {
+          id
+          quizContent
+          correctAnswer
+          quizOptions {
+            ... on QuizOption {
+              quizOptionText
+              optionImage {
+                url
+              }
+            }
+          }
+          category {
+            id
+            categoryName
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .query<{ quizzes: Quiz[] }>({
+        query: GET_INCORRECT_QUIZZES,
+      })
+      .pipe(map((result) => result.data.quizzes));
+  }
+
+  createQuiz(quizData: QuizCreateInput): Observable<Quiz> {
+    const CREATE_QUIZ = gql`
+      mutation CreateQuiz($data: QuizCreateInput!) {
+        createQuiz(data: $data) {
+          id
+          quizContent
+          correctAnswer
+          quizOptions {
+            ... on QuizOption {
+              quizOptionText
+              optionImage {
+                url
+              }
+            }
+          }
+          category {
+            id
+            categoryName
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ createQuiz: Quiz }>({
+        mutation: CREATE_QUIZ,
+        variables: {
+          data: {
+            quizContent: quizData.quizContent,
+            correctAnswer: quizData.correctAnswer,
+            quizOptions: {
+              connect: quizData.quizOptions.map((id) => ({ id })),
+            },
+            category: { connect: quizData.category.map((id) => ({ id })) },
+            isCollected: quizData.isCollected || false,
+          },
+        },
+      })
+      .pipe(map((result) => result.data!.createQuiz));
+  }
+
+  updateQuizViewTime(quizId: string, viewTimes: Date[]): Observable<Quiz> {
+    // Create properly formatted DateTime string
+    const now = new Date();
+    const newViewTimes = [now, ...viewTimes];
+
+    const UPDATE_QUIZ_VIEW_TIME = gql`
+      mutation UpdateQuizViewTime($id: ID!, $newViewTime: [Date!]!) {
+        updateQuiz(where: { id: $id }, data: { viewTime: $newViewTime }) {
+          id
+          viewTime
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ updateQuiz: Quiz }>({
+        mutation: UPDATE_QUIZ_VIEW_TIME,
+        variables: {
+          id: quizId,
+          newViewTime: newViewTimes,
+        },
+      })
+      .pipe(
+        map((result) => {
+          if (!result.data?.updateQuiz) {
+            throw new Error('Failed to update view time');
+          }
+          return result.data.updateQuiz;
+        })
+      );
+  }
+
+  markQuizCollected(quizId: string, isCollected: boolean): Observable<Quiz> {
+    const MARK_QUIZ_COLLECTED = gql`
+      mutation MarkQuizCollected($id: ID!, $isCollected: Boolean!) {
+        updateQuiz(where: { id: $id }, data: { isCollected: $isCollected }) {
+          id
+          isCollected
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ updateQuiz: Quiz }>({
+        mutation: MARK_QUIZ_COLLECTED,
+        variables: { id: quizId, isCollected },
+      })
+      .pipe(map((result) => result.data!.updateQuiz));
   }
 }

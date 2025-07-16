@@ -1,0 +1,66 @@
+<div class="max-w-2xl mx-auto">
+  <div class="bg-white p-6 rounded-lg shadow-md">
+    <!-- Quiz Content with Multiple Images -->
+    <div class="mb-6">
+      <h2 class="text-xl font-bold mb-3">{{ quizContent }}</h2>
+      <div *ngIf="quiz?.quizImages?.length" class="grid grid-cols-2 gap-2 mt-3">
+        <img
+          *ngFor="let image of quiz?.quizImages"
+          [src]="image.url"
+          class="max-h-40 w-full object-cover rounded-lg border border-gray-200"
+          alt="Quiz image"
+        />
+      </div>
+    </div>
+    <div class="space-y-3 mb-6">
+      <div
+        *ngFor="let option of quiz?.quizOptions; let i = index"
+        class="p-3 border rounded-lg cursor-pointer transition-colors"
+        [class.bg-blue-100]="selectedOption === i && !submitted"
+        [class.bg-green-100]="
+          submitted && i === convertAnswerToLetter(quiz!.correctAnswer)
+        "
+        [class.bg-red-100]="
+          submitted &&
+          selectedOption === i &&
+          i !== convertAnswerToLetter(quiz!.correctAnswer)
+        "
+        (click)="selectOption(i)"
+      >
+        <span class="font-semibold mr-2">{{ getOptionLetter(i) }}.</span>
+        {{ option.quizOptionText }}
+        <img
+          *ngIf="option.optionImage?.url"
+          [src]="option.optionImage?.url"
+          class="mt-2 max-h-40 mx-auto"
+        />
+      </div>
+    </div>
+
+    <div *ngIf="submitted && selectedOption !== null" class="mb-4">
+      <p *ngIf="isCorrect" class="text-green-600 font-semibold">Correct!</p>
+      <p *ngIf="!isCorrect" class="text-red-600 font-semibold">
+        Correct answer: {{ quiz?.correctAnswer }}
+      </p>
+    </div>
+
+    <div class="flex justify-between">
+      <button
+        *ngIf="!submitted"
+        class="px-4 py-2 bg-blue-500 text-white rounded disabled:bg-gray-300"
+        [disabled]="selectedOption === null"
+        (click)="submitAnswer()"
+      >
+        Submit
+      </button>
+
+      <button
+        *ngIf="submitted"
+        class="px-4 py-2 bg-green-500 text-white rounded"
+        (click)="isLastQuestion ? endTest() : moveToNext()"
+      >
+        {{ isLastQuestion ? "Finish" : "Next" }}
+      </button>
+    </div>
+  </div>
+</div>

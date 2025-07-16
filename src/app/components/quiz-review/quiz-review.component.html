@@ -1,0 +1,26 @@
+<div class="container mx-auto p-4">
+  <h1 class="text-2xl font-bold mb-4">Review Mistakes</h1>
+
+  <div *ngIf="incorrectQuizzes.length === 0" class="text-center py-8">
+    <p class="text-gray-500">No incorrect quizzes to review</p>
+  </div>
+  <div *ngIf="!selectedCategory" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div
+      *ngFor="let category of categories"
+      class="p-4 border rounded-lg cursor-pointer hover:bg-gray-100"
+      (click)="startTest(category)"
+    >
+      <h2 class="text-lg font-semibold">{{ category.categoryName }}</h2>
+    </div>
+  </div>
+
+  <app-quiz-learning-mode
+    *ngIf="currentQuiz"
+    [quiz]="currentQuiz"
+    [isLastQuestion]="isLastQuestion"
+    (answerSubmitted)="handleAnswer($event)"
+    (nextQuestion)="nextQuestion()"
+    (finishTest)="finishReview()"
+  >
+  </app-quiz-learning-mode>
+</div>

@@ -4,12 +4,18 @@ import { LearningModeComponent } from './components/learning-mode/learning-mode.
 import { WordReviewComponent } from './components/word-review/word-review.component';
 import { ReviewModeComponent } from './components/review-mode/review-mode.component';
 import { CreateWordComponent } from './components/create-word/create-word.component';
+import { QuizTestComponent } from './components/quiz-test/quiz-test.component';
+import { CreateQuizComponent } from './components/create-quiz/create-quiz.component';
+import { QuizReviewComponent } from './components/quiz-review/quiz-review.component';
 
 export const routes: Routes = [
-  { path: '', redirectTo: '/learning', pathMatch: 'full' },
-  { path: 'learning', component: WordLearningComponent },
-  { path: 'learning/:id', component: LearningModeComponent },
-  { path: 'review', component: WordReviewComponent },
-  { path: 'review/:id', component: ReviewModeComponent },
-  { path: 'create', component: CreateWordComponent },
+  { path: '', redirectTo: '/word-learning', pathMatch: 'full' },
+  { path: 'word-learning', component: WordLearningComponent },
+  { path: 'word-learning/:id', component: LearningModeComponent },
+  { path: 'word-review', component: WordReviewComponent },
+  { path: 'word-review/:id', component: ReviewModeComponent },
+  { path: 'word-create', component: CreateWordComponent },
+  { path: 'quiz-learning', component: QuizTestComponent },
+  { path: 'quiz-review', component: QuizReviewComponent },
+  { path: 'quiz-create', component: CreateQuizComponent },
 ];
