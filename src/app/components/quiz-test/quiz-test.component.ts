@@ -56,6 +56,7 @@ export class QuizTestComponent {
 
   recordViewTime() {
     const currentViewTime = this.quizzes[this.currentQuizIndex].viewTime;
+    currentViewTime.push(new Date().toISOString());
     this.graphqlService
       .updateQuizViewTime(
         this.quizzes[this.currentQuizIndex].id,

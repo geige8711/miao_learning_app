@@ -22,12 +22,21 @@ export interface Quiz {
   quizContent: string;
   correctAnswer: string;
   quizOptions?: QuizOption[]; // Made optional
-  isCollected: boolean;
-  viewTime: Date[];
+  isCollected: boolean; // Made nullable
+  viewTime: string[];
   category?: Category[]; // Made optional
   quizImages?: {
     url: string;
   }[]; // Optional images for the quiz
+}
+
+export interface QuizInput {
+  quizContent: string;
+  correctAnswer: string;
+  quizOptions: QuizOptionInput[];
+  quizImages?: File[];
+  isCollected?: boolean;
+  categories: CategoryInput[]; // Array of categories
 }
 
 export interface QuizCreateInput {
@@ -40,9 +49,24 @@ export interface QuizCreateInput {
 
 export interface QuizOptionInput {
   quizOptionText: string;
-  optionImage?: string; // Asset ID
+  optionImage?: File; // Asset ID
 }
 
 export interface QuizWithOptions extends Omit<Quiz, 'quizOptions'> {
   quizOptions: QuizOption[]; // Now guaranteed to exist
+}
+
+export interface CategoryInput {
+  name: string;
+  isExisting: boolean;
+  categoryId?: string;
+}
+
+export interface QuizOptionCreateInput {
+  quizOptionText: string;
+  optionImage?: {
+    connect?: {
+      id: string;
+    };
+  };
 }

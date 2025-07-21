@@ -8,7 +8,7 @@ import {
 } from '@angular/forms';
 
 import { Router, RouterModule } from '@angular/router';
-import { HotToastService } from '@ngneat/hot-toast';
+import { ToastrService } from 'ngx-toastr';
 import { CommonModule } from '@angular/common';
 import { GraphqlService } from '../../services/graphql.service';
 import { Tag } from '../../../types/word.types';
@@ -31,7 +31,7 @@ export class CreateWordComponent {
   constructor(
     private fb: FormBuilder,
     private graphqlService: GraphqlService,
-    private toast: HotToastService,
+    private toast: ToastrService,
     private router: Router
   ) {
     this.wordItemForm = this.fb.group({

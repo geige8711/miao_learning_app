@@ -17,5 +17,5 @@ export const routes: Routes = [
   { path: 'word-create', component: CreateWordComponent },
   { path: 'quiz-learning', component: QuizTestComponent },
   { path: 'quiz-review', component: QuizReviewComponent },
-  { path: 'quiz-create', component: CreateQuizComponent },
+  { path: 'quiz-creation', component: CreateQuizComponent },
 ];

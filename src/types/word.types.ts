@@ -45,6 +45,7 @@ export interface WordItem {
   images: Asset[];
   createdAt: string;
   updatedAt: string;
+  viewTime: string[];
 }
 
 export interface CreateWordItemInput {

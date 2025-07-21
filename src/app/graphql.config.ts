@@ -20,7 +20,7 @@ export function createApollo(): ApolloClientOptions<NormalizedCacheObject> {
     cache: new InMemoryCache(),
     defaultOptions: {
       watchQuery: {
-        fetchPolicy: 'cache-and-network',
+        fetchPolicy: 'no-cache',
       },
       mutate: {
         context: {

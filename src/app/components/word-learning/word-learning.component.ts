@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { HotToastService } from '@ngneat/hot-toast';
+import { ToastrService } from 'ngx-toastr';
 import { GraphqlService } from '../../services/graphql.service';
 
 @Component({
@@ -17,7 +17,7 @@ export class WordLearningComponent implements OnInit {
 
   constructor(
     private graphqlService: GraphqlService,
-    private toast: HotToastService
+    private toast: ToastrService
   ) {}
 
   ngOnInit(): void {

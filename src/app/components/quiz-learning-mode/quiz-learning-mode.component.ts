@@ -26,7 +26,6 @@ export class QuizLearningModeComponent {
   }
 
   get quizContent(): string {
-    console.log('Quiz content:', this.quiz?.quizContent);
     return this.quiz
       ? this.quiz.quizContent.replace('answer_placeholder', '__________')
       : '';

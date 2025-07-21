@@ -1,18 +1,17 @@
 import { Injectable } from '@angular/core';
 import { Apollo } from 'apollo-angular';
 import { gql } from '@apollo/client/core';
-import { forkJoin, Observable, of, from, timer } from 'rxjs';
+import { forkJoin, Observable, of, from, timer, throwError } from 'rxjs';
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { Tag, WordItem, CreateWordItemInput } from '../../types/word.types';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 import {
   Category,
-  QuizOptionInput,
-  QuizOption,
   Quiz,
-  QuizCreateInput,
   CategoryWithQuizzes,
+  QuizInput,
+  QuizOptionCreateInput,
 } from '../../types/quiz.types';
 
 @Injectable({
@@ -191,6 +190,35 @@ export class GraphqlService {
       .pipe(map((result) => result.data.tags));
   }
 
+  // Get all tags with their word items
+  getCollectedTags(): Observable<Tag[]> {
+    const GET_TAGS = gql`
+      query GetTags {
+        tags {
+          id
+          tagName
+          createdAt
+          updatedAt
+          wordItem(where: { OR: [{ isKnown: false }, { isCollected: true }] }) {
+            id
+            item
+            isCollected
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .query<{ tags: Tag[] }>({
+        query: GET_TAGS,
+      })
+      .pipe(
+        map((result) =>
+          result.data.tags.filter((tag) => tag.wordItem.length > 0)
+        )
+      );
+  }
+
   // Get word items by tag
   getWordItemsByTag(tagId: string): Observable<WordItem[]> {
     const GET_WORD_ITEMS_BY_TAG = gql`
@@ -231,31 +259,90 @@ export class GraphqlService {
       .pipe(map((result) => result.data.tag.wordItem));
   }
 
-  // Update word item view timestamp
+  // Get word items by tag
+  getCollectedWordItemsByTag(tagId: string): Observable<WordItem[]> {
+    const GET_WORD_ITEMS_BY_TAG = gql`
+      query GetWordItemsByTag($tagId: ID!) {
+        tag(where: { id: $tagId }) {
+          wordItem(where: { OR: [{ isKnown: false }, { isCollected: true }] }) {
+            id
+            item
+            meaning
+            isKnown
+            isCollected
+            viewTime
+            createdAt
+            updatedAt
+            tags {
+              id
+              tagName
+            }
+            examples {
+              id
+              sentence
+              meaning
+            }
+            images {
+              id
+              url
+            }
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .query<{ tag: { wordItem: WordItem[] } }>({
+        query: GET_WORD_ITEMS_BY_TAG,
+        variables: { tagId },
+      })
+      .pipe(map((result) => result.data.tag.wordItem));
+  }
+
   updateWordViewTimestamp(
     wordItemId: string,
-    timestamp: string
+    viewTimes: string[]
   ): Observable<WordItem> {
-    const UPDATE_WORD_VIEW_TIMESTAMP = gql`
-      mutation UpdateWordViewTimestamp($id: ID!, $timestamp: String!) {
-        updateWordItem(
+    const UPDATE_AND_PUBLISH_WORD_ITEM = gql`
+      mutation UpdateAndPublishWordItem($id: ID!, $viewTimes: [Date!]!) {
+        update: updateWordItem(
           where: { id: $id }
-          data: { viewTime: { push: $timestamp } }
+          data: { viewTime: $viewTimes }
         ) {
           id
           item
           viewTime
           updatedAt
         }
+        publish: publishWordItem(where: { id: $id }) {
+          id
+        }
       }
     `;
 
     return this.apollo
-      .mutate<{ updateWordItem: WordItem }>({
-        mutation: UPDATE_WORD_VIEW_TIMESTAMP,
-        variables: { id: wordItemId, timestamp },
+      .mutate<{
+        update: WordItem;
+        publish: { id: string };
+      }>({
+        mutation: UPDATE_AND_PUBLISH_WORD_ITEM,
+        variables: {
+          id: wordItemId,
+          viewTimes,
+        },
       })
-      .pipe(map((result) => result.data!.updateWordItem));
+      .pipe(
+        map((result) => {
+          if (!result.data?.update) {
+            throw new Error('Failed to update view timestamps');
+          }
+          return result.data.update;
+        }),
+        catchError((error) => {
+          console.error('Error updating/publishing word item:', error);
+          throw new Error('Failed to update and publish word item');
+        })
+      );
   }
 
   createWordItem(wordItemData: CreateWordItemInput): Observable<WordItem> {
@@ -413,13 +500,13 @@ export class GraphqlService {
     );
   }
 
-  // Mark word item as unknown
   markWordItemUnknown(
     wordItemId: string,
     isKnown: boolean
   ): Observable<WordItem> {
-    const MARK_WORD_ITEM_UNKNOWN = gql`
-      mutation MarkWordItemUnknown($id: ID!, $isKnown: Boolean!) {
+    // 1. First define both mutations
+    const UPDATE_WORD_ITEM = gql`
+      mutation UpdateWordItem($id: ID!, $isKnown: Boolean!) {
         updateWordItem(where: { id: $id }, data: { isKnown: $isKnown }) {
           id
           item
@@ -429,21 +516,50 @@ export class GraphqlService {
       }
     `;
 
+    const PUBLISH_WORD_ITEM = gql`
+      mutation PublishWordItem($id: ID!) {
+        publishWordItem(where: { id: $id }) {
+          id
+        }
+      }
+    `;
+
+    // 2. Execute mutations sequentially
     return this.apollo
       .mutate<{ updateWordItem: WordItem }>({
-        mutation: MARK_WORD_ITEM_UNKNOWN,
+        mutation: UPDATE_WORD_ITEM,
         variables: { id: wordItemId, isKnown },
       })
-      .pipe(map((result) => result.data!.updateWordItem));
+      .pipe(
+        switchMap((updateResult) => {
+          const updatedItem = updateResult.data!.updateWordItem;
+
+          return this.apollo
+            .mutate({
+              mutation: PUBLISH_WORD_ITEM,
+              variables: { id: wordItemId },
+            })
+            .pipe(
+              map(() => updatedItem) // Return the updated item after publishing
+            );
+        }),
+        // Optional: Add error handling
+        catchError((error) => {
+          console.error('Error updating/publishing word item:', error);
+          return throwError(
+            () => new Error('Failed to update word item status')
+          );
+        })
+      );
   }
 
-  // Mark word item as collected
   markWordItemCollected(
     wordItemId: string,
     isCollected: boolean
   ): Observable<WordItem> {
-    const MARK_WORD_ITEM_COLLECTED = gql`
-      mutation MarkWordItemCollected($id: ID!, $isCollected: Boolean!) {
+    // Update mutation
+    const UPDATE_WORD_ITEM = gql`
+      mutation UpdateWordItem($id: ID!, $isCollected: Boolean!) {
         updateWordItem(
           where: { id: $id }
           data: { isCollected: $isCollected }
@@ -456,12 +572,37 @@ export class GraphqlService {
       }
     `;
 
+    // Publish mutation
+    const PUBLISH_WORD_ITEM = gql`
+      mutation PublishWordItem($id: ID!) {
+        publishWordItem(where: { id: $id }) {
+          id
+          item
+          isCollected
+        }
+      }
+    `;
+
     return this.apollo
       .mutate<{ updateWordItem: WordItem }>({
-        mutation: MARK_WORD_ITEM_COLLECTED,
+        mutation: UPDATE_WORD_ITEM,
         variables: { id: wordItemId, isCollected },
       })
-      .pipe(map((result) => result.data!.updateWordItem));
+      .pipe(
+        // Chain the publish mutation after successful update
+        switchMap((result) => {
+          const updatedItem = result.data!.updateWordItem;
+          return this.apollo
+            .mutate({
+              mutation: PUBLISH_WORD_ITEM,
+              variables: { id: wordItemId },
+            })
+            .pipe(
+              // Return the original updated item
+              map(() => updatedItem)
+            );
+        })
+      );
   }
 
   // Category methods
@@ -480,35 +621,6 @@ export class GraphqlService {
         query: GET_CATEGORIES,
       })
       .pipe(map((result) => result.data.categories));
-  }
-
-  // Quiz Option methods
-  createQuizOption(quizOptionData: QuizOptionInput): Observable<QuizOption> {
-    const CREATE_QUIZ_OPTION = gql`
-      mutation CreateQuizOption($data: QuizOptionCreateInput!) {
-        createQuizOption(data: $data) {
-          id
-          quizOptionText
-          optionImage {
-            url
-          }
-        }
-      }
-    `;
-
-    return this.apollo
-      .mutate<{ createQuizOption: QuizOption }>({
-        mutation: CREATE_QUIZ_OPTION,
-        variables: {
-          data: {
-            quizOptionText: quizOptionData.quizOptionText,
-            optionImage: quizOptionData.optionImage
-              ? { id: quizOptionData.optionImage }
-              : null,
-          },
-        },
-      })
-      .pipe(map((result) => result.data!.createQuizOption));
   }
 
   // Quiz methods
@@ -565,13 +677,16 @@ export class GraphqlService {
   }
 
   getCategoriesWithIncorrectQuizzes(): Observable<CategoryWithQuizzes[]> {
-    const query = `
-      query GetCategoriesWithIncorrectQuizzes {
-        categories(where: { quiz_some: { isCollected: true } }) {
+    const GET_CATEGORIES_WITH_QUIZZES = gql`
+      query GetCategoriesWithQuizzes {
+        categories {
           id
           categoryName
-          quiz(where: { isCollected: true }) {
+          quiz {
             id
+            correctAnswer
+            isCollected
+            viewTime
             quizContent
             quizImages {
               url
@@ -584,39 +699,35 @@ export class GraphqlService {
                 }
               }
             }
-            correctAnswer
-            isCollected
-            viewTime
           }
         }
       }
     `;
 
-    return this.executeQuery<{ categories: CategoryWithQuizzes[] }>(query).pipe(
-      map((result) => {
-        const categoriesWithQuizzes = (result.categories || [])
-          .filter((category) => category.quiz && category.quiz.length > 0)
-          .map((category) => ({
-            ...category,
-            quiz: category.quiz.map((quiz) => ({
-              ...quiz,
-              quizOptions: quiz.quizOptions || [],
-            })),
-          }));
-
-        if (categoriesWithQuizzes.length === 0) {
-          throw new Error('No categories found with incorrect quizzes');
-        }
-        return categoriesWithQuizzes;
-      }),
-      catchError((error) => {
-        console.error(
-          'Error fetching categories with incorrect quizzes:',
-          error
-        );
-        return of([]);
+    return this.apollo
+      .query<{ categories: CategoryWithQuizzes[] }>({
+        query: GET_CATEGORIES_WITH_QUIZZES,
+        fetchPolicy: 'no-cache', // Bypass cache
       })
-    );
+      .pipe(
+        map((result) => {
+          return result.data.categories.map((category) => ({
+            ...category,
+            quiz:
+              category.quiz
+                ?.map((quiz) => ({
+                  ...quiz,
+                  isCollected: quiz.isCollected ?? false, // Default to false if null
+                  quizOptions: quiz.quizOptions || [],
+                }))
+                .filter((quiz) => quiz.isCollected) || [],
+          }));
+        }),
+        catchError((error) => {
+          console.error('Error fetching categories:', error);
+          return of([]);
+        })
+      );
   }
 
   getIncorrectQuizzes(): Observable<Quiz[]> {
@@ -649,50 +760,213 @@ export class GraphqlService {
       .pipe(map((result) => result.data.quizzes));
   }
 
-  createQuiz(quizData: QuizCreateInput): Observable<Quiz> {
-    const CREATE_QUIZ = gql`
-      mutation CreateQuiz($data: QuizCreateInput!) {
-        createQuiz(data: $data) {
+  createCategory(categoryName: string): Observable<Category> {
+    const CREATE_CATEGORY = gql`
+      mutation CreateCategory($categoryName: String!) {
+        createCategory(data: { categoryName: $categoryName }) {
           id
-          quizContent
-          correctAnswer
-          quizOptions {
-            ... on QuizOption {
-              quizOptionText
-              optionImage {
-                url
-              }
-            }
-          }
-          category {
-            id
-            categoryName
-          }
+          categoryName
+        }
+      }
+    `;
+
+    const PUBLISH_CATEGORY = gql`
+      mutation PublishCategory($id: ID!) {
+        publishCategory(where: { id: $id }) {
+          id
         }
       }
     `;
 
     return this.apollo
-      .mutate<{ createQuiz: Quiz }>({
-        mutation: CREATE_QUIZ,
-        variables: {
-          data: {
-            quizContent: quizData.quizContent,
-            correctAnswer: quizData.correctAnswer,
-            quizOptions: {
-              connect: quizData.quizOptions.map((id) => ({ id })),
-            },
-            category: { connect: quizData.category.map((id) => ({ id })) },
-            isCollected: quizData.isCollected || false,
-          },
-        },
+      .mutate<{ createCategory: Category }>({
+        mutation: CREATE_CATEGORY,
+        variables: { categoryName },
       })
-      .pipe(map((result) => result.data!.createQuiz));
+      .pipe(
+        switchMap((result) => {
+          if (!result.data?.createCategory) {
+            throw new Error('Category creation failed');
+          }
+
+          return this.apollo
+            .mutate({
+              mutation: PUBLISH_CATEGORY,
+              variables: { id: result.data.createCategory.id },
+            })
+            .pipe(
+              map(() => result!.data!.createCategory),
+              catchError((publishError) => {
+                console.error(
+                  'Failed to publish category, returning draft version',
+                  publishError
+                );
+                return of(result!.data!.createCategory);
+              })
+            );
+        })
+      );
   }
 
-  updateQuizViewTime(quizId: string, viewTimes: Date[]): Observable<Quiz> {
+  createQuiz(quizData: QuizInput): Observable<Quiz> {
+    // Upload quiz images first
+    const quizImagesUpload$ = quizData.quizImages?.length
+      ? forkJoin(
+          quizData.quizImages.map((file) => this.createAndUploadAsset(file))
+        )
+      : of([]);
+
+    // Handle option images - return empty array if no images to upload
+    const optionsWithImages = quizData.quizOptions.filter(
+      (option) => option.optionImage
+    );
+    const optionImagesUpload$ =
+      optionsWithImages.length > 0
+        ? forkJoin(
+            optionsWithImages.map((option) =>
+              this.createAndUploadAsset(option.optionImage!)
+            )
+          )
+        : of([]);
+
+    return forkJoin([quizImagesUpload$, optionImagesUpload$]).pipe(
+      switchMap(([quizImageResults, optionImageResults]) => {
+        // Prepare image connections
+        const quizImageConnections = quizImageResults.map((res) => ({
+          id: res.data.publishAsset.id,
+        }));
+
+        // Prepare option data with image connections
+        let optionImageIndex = 0;
+        const quizOptionsData: QuizOptionCreateInput[] =
+          quizData.quizOptions.map((option) => {
+            const optionData: QuizOptionCreateInput = {
+              quizOptionText: option.quizOptionText,
+            };
+
+            if (option.optionImage) {
+              optionData.optionImage = {
+                connect:
+                  optionImageResults[optionImageIndex++].data.publishAsset.id,
+              };
+            }
+
+            return optionData;
+          });
+
+        const quizQuizOptionsCreateInputs: any[] = quizOptionsData.map(
+          (option) => ({
+            QuizOption: { ...option },
+          })
+        );
+
+        // Prepare category connections
+        const existingCategories = quizData.categories
+          .filter((cat) => cat.isExisting && cat.categoryId)
+          .map((cat) => ({ id: cat.categoryId }));
+
+        const newCategories = quizData.categories
+          .filter((cat) => !cat.isExisting)
+          .map((cat) => ({ categoryName: cat.name }));
+
+        const CREATE_QUIZ = gql`
+          mutation CreateQuiz(
+            $quizContent: String!
+            $correctAnswer: String!
+            $quizOptions: [quizQuizOptionsCreateInput!]
+            $quizImages: [AssetWhereUniqueInput!]
+            $isCollected: Boolean
+            $existingCategories: [CategoryWhereUniqueInput!]
+            $newCategories: [CategoryCreateInput!]
+          ) {
+            createQuiz(
+              data: {
+                quizContent: $quizContent
+                correctAnswer: $correctAnswer
+                quizOptions: { create: $quizOptions }
+                quizImages: { connect: $quizImages }
+                isCollected: $isCollected
+                category: {
+                  connect: $existingCategories
+                  create: $newCategories
+                }
+              }
+            ) {
+              id
+              quizContent
+              correctAnswer
+              isCollected
+              quizOptions {
+                ... on QuizOption {
+                  id
+                  quizOptionText
+                  optionImage {
+                    url
+                  }
+                }
+              }
+              quizImages {
+                url
+              }
+              category {
+                id
+                categoryName
+              }
+            }
+          }
+        `;
+
+        const PUBLISH_QUIZ = gql`
+          mutation PublishQuiz($id: ID!) {
+            publishQuiz(where: { id: $id }) {
+              id
+            }
+          }
+        `;
+
+        return this.apollo
+          .mutate<{ createQuiz: Quiz }>({
+            mutation: CREATE_QUIZ,
+            variables: {
+              quizContent: quizData.quizContent,
+              correctAnswer: quizData.correctAnswer,
+              quizOptions: quizQuizOptionsCreateInputs,
+              quizImages: quizImageConnections,
+              isCollected: quizData.isCollected || false,
+              existingCategories,
+              newCategories,
+            },
+          })
+          .pipe(
+            switchMap((createResult) => {
+              if (!createResult.data?.createQuiz) {
+                throw new Error('Quiz creation failed');
+              }
+
+              return this.apollo
+                .mutate({
+                  mutation: PUBLISH_QUIZ,
+                  variables: { id: createResult.data.createQuiz.id },
+                })
+                .pipe(
+                  map(() => createResult.data!.createQuiz),
+                  catchError((publishError) => {
+                    console.error(
+                      'Failed to publish quiz, returning draft version',
+                      publishError
+                    );
+                    return of(createResult.data!.createQuiz);
+                  })
+                );
+            })
+          );
+      })
+    );
+  }
+
+  updateQuizViewTime(quizId: string, viewTimes: string[]): Observable<Quiz> {
     // Create properly formatted DateTime string
-    const now = new Date();
+    const now = new Date().toISOString();
     const newViewTimes = [now, ...viewTimes];
 
     const UPDATE_QUIZ_VIEW_TIME = gql`
@@ -700,6 +974,9 @@ export class GraphqlService {
         updateQuiz(where: { id: $id }, data: { viewTime: $newViewTime }) {
           id
           viewTime
+        }
+        publishQuiz(where: { id: $id }) {
+          id
         }
       }
     `;
@@ -729,6 +1006,9 @@ export class GraphqlService {
           id
           isCollected
         }
+        publishQuiz(where: { id: $id }) {
+          id
+        }
       }
     `;
 
@@ -738,5 +1018,205 @@ export class GraphqlService {
         variables: { id: quizId, isCollected },
       })
       .pipe(map((result) => result.data!.updateQuiz));
+  }
+
+  publishQuizOption(optionId: string): Observable<any> {
+    const PUBLISH_QUIZ_OPTION = gql`
+      mutation PublishQuizOption($id: ID!) {
+        publishQuizOption(where: { id: $id }) {
+          id
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate({
+        mutation: PUBLISH_QUIZ_OPTION,
+        variables: { id: optionId },
+      })
+      .pipe(
+        catchError((error) => {
+          console.error(`Failed to publish quiz option ${optionId}:`, error);
+          throw error;
+        })
+      );
+  }
+
+  createQuizNew(quizData: QuizInput): Observable<Quiz> {
+    // Upload quiz images first
+    const quizImagesUpload$ = quizData.quizImages?.length
+      ? forkJoin(
+          quizData.quizImages.map((file) => this.createAndUploadAsset(file))
+        )
+      : of([]);
+
+    // Handle option images - return empty array if no images to upload
+    const optionsWithImages = quizData.quizOptions.filter(
+      (option) => option.optionImage
+    );
+    const optionImagesUpload$ =
+      optionsWithImages.length > 0
+        ? forkJoin(
+            optionsWithImages.map((option) =>
+              this.createAndUploadAsset(option.optionImage!)
+            )
+          )
+        : of([]);
+
+    return forkJoin([quizImagesUpload$, optionImagesUpload$]).pipe(
+      switchMap(([quizImageResults, optionImageResults]) => {
+        // Prepare image connections
+        const quizImageConnections = quizImageResults.map((res) => ({
+          id: res.data.publishAsset.id,
+        }));
+
+        // Prepare option data with image connections
+        let optionImageIndex = 0;
+        const quizOptionsData: QuizOptionCreateInput[] =
+          quizData.quizOptions.map((option) => {
+            const optionData: QuizOptionCreateInput = {
+              quizOptionText: option.quizOptionText,
+            };
+
+            if (option.optionImage) {
+              optionData.optionImage = {
+                connect:
+                  optionImageResults[optionImageIndex++].data.publishAsset.id,
+              };
+            }
+
+            return optionData;
+          });
+
+        const quizQuizOptionsCreateInputs: any[] = quizOptionsData.map(
+          (option) => ({
+            QuizOption: { ...option },
+          })
+        );
+
+        // Prepare category connections
+        const existingCategories = quizData.categories
+          .filter((cat) => cat.isExisting && cat.categoryId)
+          .map((cat) => ({ id: cat.categoryId }));
+
+        const newCategories = quizData.categories
+          .filter((cat) => !cat.isExisting)
+          .map((cat) => ({ categoryName: cat.name }));
+
+        const CREATE_QUIZ = gql`
+          mutation CreateQuiz(
+            $quizContent: String!
+            $correctAnswer: String!
+            $quizOptions: [quizQuizOptionsCreateInput!]
+            $quizImages: [AssetWhereUniqueInput!]
+            $isCollected: Boolean
+            $existingCategories: [CategoryWhereUniqueInput!]
+            $newCategories: [CategoryCreateInput!]
+          ) {
+            createQuiz(
+              data: {
+                quizContent: $quizContent
+                correctAnswer: $correctAnswer
+                quizOptions: { create: $quizOptions }
+                quizImages: { connect: $quizImages }
+                isCollected: $isCollected
+                category: {
+                  connect: $existingCategories
+                  create: $newCategories
+                }
+              }
+            ) {
+              id
+              quizContent
+              correctAnswer
+              isCollected
+              quizOptions {
+                ... on QuizOption {
+                  id
+                  quizOptionText
+                  optionImage {
+                    url
+                  }
+                }
+              }
+              quizImages {
+                url
+              }
+              category {
+                id
+                categoryName
+              }
+            }
+          }
+        `;
+
+        return this.apollo
+          .mutate<{ createQuiz: Quiz }>({
+            mutation: CREATE_QUIZ,
+            variables: {
+              quizContent: quizData.quizContent,
+              correctAnswer: quizData.correctAnswer,
+              quizOptions: quizQuizOptionsCreateInputs,
+              quizImages: quizImageConnections,
+              isCollected: quizData.isCollected || false,
+              existingCategories,
+              newCategories,
+            },
+          })
+          .pipe(
+            switchMap((createResult) => {
+              if (!createResult.data?.createQuiz) {
+                throw new Error('Quiz creation failed');
+              }
+
+              // Publish all quiz options first
+              const optionPublishObservables = createResult.data.createQuiz
+                .quizOptions!.filter((option) => option.id) // Ensure we have an ID
+                .map((option) => this.publishQuizOption(option.id));
+
+              return optionPublishObservables.length > 0
+                ? forkJoin(optionPublishObservables).pipe(
+                    switchMap(() =>
+                      this.publishQuiz(createResult!.data!.createQuiz.id)
+                    ),
+                    catchError((optionError) => {
+                      console.error(
+                        'Some options failed to publish, but continuing with quiz publish',
+                        optionError
+                      );
+                      return this.publishQuiz(
+                        createResult!.data!.createQuiz.id
+                      );
+                    })
+                  )
+                : this.publishQuiz(createResult!.data!.createQuiz.id);
+            })
+          );
+      })
+    );
+  }
+
+  // Helper method to publish the quiz
+  private publishQuiz(quizId: string): Observable<Quiz> {
+    const PUBLISH_QUIZ = gql`
+      mutation PublishQuiz($id: ID!) {
+        publishQuiz(where: { id: $id }) {
+          id
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ publishQuiz: { id: string } }>({
+        mutation: PUBLISH_QUIZ,
+        variables: { id: quizId },
+      })
+      .pipe(
+        map(() => ({ id: quizId } as Quiz)), // Return minimal quiz data
+        catchError((error) => {
+          console.error(`Failed to publish quiz ${quizId}:`, error);
+          throw error;
+        })
+      );
   }
 }

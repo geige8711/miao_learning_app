@@ -7,10 +7,15 @@
   <div *ngIf="!selectedCategory" class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <div
       *ngFor="let category of categories"
-      class="p-4 border rounded-lg cursor-pointer hover:bg-gray-100"
+      class="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition cursor-pointer flex flex-col items-center"
       (click)="startTest(category)"
     >
-      <h2 class="text-lg font-semibold">{{ category.categoryName }}</h2>
+      <div class="text-xl font-semibold text-gray-800 mb-2">
+        {{ category.categoryName }}
+      </div>
+      <div class="text-sm text-gray-500">
+        {{ category?.quiz?.length || 0 }} quizzes
+      </div>
     </div>
   </div>
 

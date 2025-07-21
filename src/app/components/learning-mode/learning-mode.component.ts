@@ -2,8 +2,9 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 
-import { HotToastService } from '@ngneat/hot-toast';
+import { ToastrService } from 'ngx-toastr';
 import { GraphqlService } from '../../services/graphql.service';
+import { WordItem } from '../../../types/word.types';
 
 @Component({
   selector: 'app-learning-mode',
@@ -14,7 +15,7 @@ import { GraphqlService } from '../../services/graphql.service';
 })
 export class LearningModeComponent implements OnInit {
   tagId: string = '';
-  words: any[] = [];
+  words: WordItem[] = [];
   currentIndex = 0;
   showAnswer = false;
   isLoading = true;
@@ -23,7 +24,7 @@ export class LearningModeComponent implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private graphqlService: GraphqlService,
-    private toast: HotToastService
+    private toast: ToastrService
   ) {}
 
   ngOnInit(): void {
@@ -57,10 +58,38 @@ export class LearningModeComponent implements OnInit {
     this.showAnswer = true;
   }
 
+  recordViewTime() {
+    const currentViewTime = this.words[this.currentIndex].viewTime;
+    currentViewTime.push(new Date().toISOString());
+    this.graphqlService
+      .updateWordViewTimestamp(
+        this.words[this.currentIndex].id,
+        currentViewTime
+      )
+      .subscribe({
+        next: () => {
+          this.toast.success('View time recorded');
+        },
+        error: () => {
+          this.toast.error('Failed to record view time');
+        },
+      });
+  }
+
   nextWord(know: boolean): void {
-    if (know) {
-      // 可以在这里添加标记单词为"已知道"的逻辑
-    }
+    this.recordViewTime();
+    this.graphqlService
+      .markWordItemCollected(this.currentWord.id, know)
+      .subscribe({
+        next: () => {
+          this.toast.success(`Word marked as ${know ? 'known' : 'unknown'}`);
+        },
+        error: () => {
+          this.toast.error(
+            `Failed to mark word as ${know ? 'known' : 'unknown'}`
+          );
+        },
+      });
 
     this.showAnswer = false;
 
@@ -72,6 +101,6 @@ export class LearningModeComponent implements OnInit {
   }
 
   finishLearning(): void {
-    this.router.navigate(['/learning']);
+    this.router.navigate(['/']);
   }
 }
