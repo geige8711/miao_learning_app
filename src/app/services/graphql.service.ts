@@ -346,158 +346,173 @@ export class GraphqlService {
   }
 
   createWordItem(wordItemData: CreateWordItemInput): Observable<WordItem> {
-    const uploadObservables =
-      wordItemData.images?.map((file) =>
+    // Check if there are images to upload
+    const hasImages = wordItemData.images && wordItemData.images.length > 0;
+
+    if (hasImages) {
+      // Handle case with images
+      const uploadObservables = wordItemData.images!.map((file) =>
         this.createAndUploadAsset(file).pipe(
           catchError((error) => {
             console.error(`File ${file.name} upload failed:`, error);
             throw new Error(`File upload failed: ${file.name}`);
           })
         )
-      ) || [];
+      );
 
-    return forkJoin(uploadObservables).pipe(
-      switchMap((uploadResults) => {
-        // Prepare image connections outside the GQL template
-        const imageConnections = uploadResults.map((res) => ({
-          id: res.data.publishAsset.id,
-        }));
+      return forkJoin(uploadObservables).pipe(
+        switchMap((uploadResults) => {
+          // Prepare image connections outside the GQL template
+          const imageConnections = uploadResults.map((res) => ({
+            id: res.data.publishAsset.id,
+          }));
 
-        // Prepare tag connections
-        const existingTags = wordItemData.tags
-          .filter((tag) => tag.isExisting && tag.tagId)
-          .map((tag) => ({ id: tag.tagId }));
+          return this.createWordItemMutation(wordItemData, imageConnections);
+        })
+      );
+    } else {
+      // Handle case without images - skip upload process entirely
+      return this.createWordItemMutation(wordItemData, []);
+    }
+  }
 
-        const newTags = wordItemData.tags
-          .filter((tag) => !tag.isExisting)
-          .map((tag) => ({ tagName: tag.name }));
+  private createWordItemMutation(
+    wordItemData: CreateWordItemInput,
+    imageConnections: any[]
+  ): Observable<WordItem> {
+    // Prepare tag connections
+    const existingTags = wordItemData.tags
+      .filter((tag) => tag.isExisting && tag.tagId)
+      .map((tag) => ({ id: tag.tagId }));
 
-        const CREATE_WORD_ITEM = gql`
-          mutation CreateWordItem(
-            $item: String!
-            $meaning: String!
-            $examples: [ExampleCreateInput!]!
-            $isKnown: Boolean
-            $isCollected: Boolean
-            $imageConnections: [AssetWhereUniqueInput!]!
-            $existingTags: [TagWhereUniqueInput!]
-            $newTags: [TagCreateInput!]
-          ) {
-            createWordItem(
-              data: {
-                item: $item
-                meaning: $meaning
-                isKnown: $isKnown
-                isCollected: $isCollected
-                tags: { connect: $existingTags, create: $newTags }
-                examples: { create: $examples }
-                images: { connect: $imageConnections }
-              }
-            ) {
-              id
-              item
-              meaning
-              tags {
+    const newTags = wordItemData.tags
+      .filter((tag) => !tag.isExisting)
+      .map((tag) => ({ tagName: tag.name }));
+
+    const CREATE_WORD_ITEM = gql`
+      mutation CreateWordItem(
+        $item: String!
+        $meaning: String!
+        $examples: [ExampleCreateInput!]
+        $isKnown: Boolean
+        $isCollected: Boolean
+        $imageConnections: [AssetWhereUniqueInput!]
+        $existingTags: [TagWhereUniqueInput!]
+        $newTags: [TagCreateInput!]
+      ) {
+        createWordItem(
+          data: {
+            item: $item
+            meaning: $meaning
+            isKnown: $isKnown
+            isCollected: $isCollected
+            tags: { connect: $existingTags, create: $newTags }
+            examples: { create: $examples }
+            images: { connect: $imageConnections }
+          }
+        ) {
+          id
+          item
+          meaning
+          tags {
+            id
+            tagName
+          }
+          examples {
+            id
+            sentence
+            meaning
+          }
+          images {
+            id
+            url
+            fileName
+          }
+        }
+      }
+    `;
+
+    return this.apollo
+      .mutate<{ createWordItem: WordItem }>({
+        mutation: CREATE_WORD_ITEM,
+        variables: {
+          item: wordItemData.item,
+          meaning: wordItemData.meaning,
+          examples: wordItemData.examples,
+          isKnown: wordItemData.isKnown ?? false,
+          isCollected: wordItemData.isCollected ?? false,
+          imageConnections,
+          existingTags,
+          newTags,
+        },
+        context: {
+          headers: {
+            Authorization: `Bearer ${this.hygraphToken}`,
+          },
+        },
+      })
+      .pipe(
+        switchMap((result) => {
+          if (!result?.data?.createWordItem) {
+            throw new Error('WordItem creation failed: No data returned');
+          }
+          const createdWordItem = result.data.createWordItem;
+
+          // 添加发布操作
+          const PUBLISH_WORD_ITEM = gql`
+            mutation PublishWordItem($id: ID!) {
+              publishWordItem(where: { id: $id }) {
                 id
-                tagName
-              }
-              examples {
-                id
-                sentence
+                item
                 meaning
-              }
-              images {
-                id
-                url
-                fileName
+                isKnown
+                isCollected
+                tags {
+                  id
+                  tagName
+                }
+                examples {
+                  id
+                  sentence
+                  meaning
+                }
+                images {
+                  id
+                  url
+                  fileName
+                }
               }
             }
-          }
-        `;
+          `;
 
-        return this.apollo
-          .mutate<{ createWordItem: WordItem }>({
-            mutation: CREATE_WORD_ITEM,
-            variables: {
-              item: wordItemData.item,
-              meaning: wordItemData.meaning,
-              examples: wordItemData.examples,
-              isKnown: wordItemData.isKnown ?? false,
-              isCollected: wordItemData.isCollected ?? false,
-              imageConnections,
-              existingTags,
-              newTags,
-            },
-            context: {
-              headers: {
-                Authorization: `Bearer ${this.hygraphToken}`,
+          return this.apollo
+            .mutate<{ publishWordItem: WordItem }>({
+              mutation: PUBLISH_WORD_ITEM,
+              variables: { id: createdWordItem.id },
+              context: {
+                headers: {
+                  Authorization: `Bearer ${this.hygraphToken}`,
+                },
               },
-            },
-          })
-          .pipe(
-            switchMap((result) => {
-              if (!result?.data?.createWordItem) {
-                throw new Error('WordItem creation failed: No data returned');
-              }
-              const createdWordItem = result.data.createWordItem;
-
-              // 添加发布操作
-              const PUBLISH_WORD_ITEM = gql`
-                mutation PublishWordItem($id: ID!) {
-                  publishWordItem(where: { id: $id }) {
-                    id
-                    item
-                    meaning
-                    isKnown
-                    isCollected
-                    tags {
-                      id
-                      tagName
-                    }
-                    examples {
-                      id
-                      sentence
-                      meaning
-                    }
-                    images {
-                      id
-                      url
-                      fileName
-                    }
-                  }
-                }
-              `;
-
-              return this.apollo
-                .mutate<{ publishWordItem: WordItem }>({
-                  mutation: PUBLISH_WORD_ITEM,
-                  variables: { id: createdWordItem.id },
-                  context: {
-                    headers: {
-                      Authorization: `Bearer ${this.hygraphToken}`,
-                    },
-                  },
-                })
-                .pipe(
-                  map((publishResult) => {
-                    if (!publishResult?.data?.publishWordItem) {
-                      throw new Error('WordItem publishing failed');
-                    }
-                    return publishResult.data.publishWordItem;
-                  }),
-                  // 处理发布错误（可选：回退返回未发布的数据）
-                  catchError((error) => {
-                    console.error(
-                      'Publishing failed, returning draft version',
-                      error
-                    );
-                    return of(createdWordItem);
-                  })
-                );
             })
-          );
-      })
-    );
+            .pipe(
+              map((publishResult) => {
+                if (!publishResult?.data?.publishWordItem) {
+                  throw new Error('WordItem publishing failed');
+                }
+                return publishResult.data.publishWordItem;
+              }),
+              // 处理发布错误（可选：回退返回未发布的数据）
+              catchError((error) => {
+                console.error(
+                  'Publishing failed, returning draft version',
+                  error
+                );
+                return of(createdWordItem);
+              })
+            );
+        })
+      );
   }
 
   markWordItemUnknown(

@@ -40,7 +40,7 @@ export class CreateWordComponent {
       isKnown: [false],
       isCollected: [false],
       tags: this.fb.array([this.createTagField()]),
-      examples: this.fb.array([this.createExampleField()]),
+      examples: this.fb.array([]),
       tagSearch: [''],
     });
   }
@@ -84,7 +84,7 @@ export class CreateWordComponent {
 
   createExampleField(): FormGroup {
     return this.fb.group({
-      sentence: ['', Validators.required],
+      sentence: [''],
       meaning: [''],
     });
   }
@@ -115,9 +115,7 @@ export class CreateWordComponent {
   }
 
   removeExample(index: number): void {
-    if (this.examples.length > 1) {
-      this.examples.removeAt(index);
-    }
+    this.examples.removeAt(index);
   }
 
   toggleTagDropdown(): void {
@@ -163,10 +161,12 @@ export class CreateWordComponent {
       meaning: formValue.meaning,
       isKnown: formValue.isKnown,
       isCollected: formValue.isCollected,
-      examples: formValue.examples.map((ex: any) => ({
-        sentence: ex.sentence,
-        meaning: ex.meaning || undefined,
-      })),
+      examples: formValue.examples
+        .filter((ex: any) => ex.sentence && ex.sentence.trim() !== '')
+        .map((ex: any) => ({
+          sentence: ex.sentence,
+          meaning: ex.meaning || undefined,
+        })),
       tags: formValue.tags.map((tag: any) => ({
         name: tag.name,
         isExisting: tag.isExisting,
@@ -206,7 +206,7 @@ export class CreateWordComponent {
 
   private addDefaultFields(): void {
     this.tags.push(this.createTagField());
-    this.examples.push(this.createExampleField());
+    // Don't add default example field - examples are now optional
   }
 
   goBack(): void {

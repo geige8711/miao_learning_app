@@ -51,7 +51,7 @@ export interface WordItem {
 export interface CreateWordItemInput {
   item: string;
   meaning: string;
-  examples: ExampleInput[];
+  examples?: ExampleInput[];
   tags: TagInput[];
   isKnown?: boolean;
   isCollected?: boolean;
