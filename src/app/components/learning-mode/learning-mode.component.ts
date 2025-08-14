@@ -40,12 +40,12 @@ export class LearningModeComponent implements OnInit {
         this.isLoading = false;
         if (words.length === 0) {
           this.toast.info('No words found in this tag');
-          this.router.navigate(['/learning']);
+          this.router.navigate(['/word-learning']);
         }
       },
       error: (err) => {
         this.toast.error('Failed to load words');
-        this.router.navigate(['/learning']);
+        this.router.navigate(['/word-learning']);
       },
     });
   }

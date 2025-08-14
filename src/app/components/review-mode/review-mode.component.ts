@@ -32,19 +32,22 @@ export class ReviewModeComponent implements OnInit {
   }
 
   loadWords(): void {
+    console.log(this.tagId);
     this.graphqlService.getCollectedWordItemsByTag(this.tagId).subscribe({
       next: (words) => {
         this.words = words;
+        console.log(this.words);
         console.log('Loaded words:', this.words);
         this.isLoading = false;
         if (words.length === 0) {
           this.toast.info('No words found in this tag');
-          this.router.navigate(['/learning']);
+          this.router.navigate(['/word-learning']);
         }
       },
       error: (err) => {
+        console.log(err);
         this.toast.error('Failed to load words');
-        this.router.navigate(['/learning']);
+        this.router.navigate(['/word-learning']);
       },
     });
   }

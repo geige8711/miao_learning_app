@@ -24,6 +24,7 @@ export class WordReviewComponent implements OnInit {
     this.graphqlService.getCollectedTags().subscribe({
       next: (tags) => {
         this.tags = tags;
+        console.log(this.tags);
         this.isLoading = false;
       },
       error: (err) => {

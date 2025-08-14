@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { ToastrService } from 'ngx-toastr';
 import { GraphqlService } from '../../services/graphql.service';
+import { Tag } from '../../../types/word.types';
 
 @Component({
   selector: 'app-word-learning',
@@ -12,7 +13,7 @@ import { GraphqlService } from '../../services/graphql.service';
   styleUrls: ['./word-learning.component.css'],
 })
 export class WordLearningComponent implements OnInit {
-  tags: any[] = [];
+  tags: Tag[] = [];
   isLoading = true;
 
   constructor(
@@ -24,6 +25,7 @@ export class WordLearningComponent implements OnInit {
     this.graphqlService.getTags().subscribe({
       next: (tags) => {
         this.tags = tags;
+        console.log(tags);
         this.isLoading = false;
       },
       error: (err) => {

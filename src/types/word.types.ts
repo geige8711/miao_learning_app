@@ -5,6 +5,7 @@ export interface Tag {
   createdAt: Date;
   updatedAt: Date;
   wordItem: WordItem[];
+  wordItemCount?: number;
 }
 
 export interface Example {

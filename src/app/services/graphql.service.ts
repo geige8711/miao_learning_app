@@ -44,6 +44,75 @@ export class GraphqlService {
         })
       );
   }
+
+  /**
+   * Helper method to fetch all results using cursor-based pagination
+   * @param queryFn Function that returns a GraphQL query with cursor pagination
+   * @param variables Variables for the query
+   * @param connectionPath Path to the connection in the response (e.g., 'tagsConnection', 'wordItemsConnection')
+   * @param limit Number of items per page (default: 100)
+   */
+  private fetchAllWithCursor<T>(
+    queryFn: (first: number, after?: string) => string,
+    variables: any,
+    connectionPath: string,
+    limit: number = 100
+  ): Observable<T[]> {
+    return new Observable((observer) => {
+      let allResults: T[] = [];
+      let hasNextPage = true;
+      let after: string | undefined = undefined;
+
+      const fetchPage = () => {
+        const query = queryFn(limit, after);
+        
+        this.apollo
+          .query<any>({
+            query: gql`
+              ${query}
+            `,
+            variables: { ...variables, first: limit, after: after || undefined },
+          })
+          .pipe(
+            map((result) => {
+              const connection = this.getNestedValue(result.data, connectionPath);
+              return connection;
+            })
+          )
+          .subscribe({
+            next: (connection) => {
+              // Extract results from edges
+              const results = connection.edges.map((edge: any) => edge.node);
+              allResults.push(...results);
+              
+              // Update pagination info
+              hasNextPage = connection.pageInfo.hasNextPage;
+              after = connection.pageInfo.endCursor;
+              
+              if (hasNextPage) {
+                // Add small delay to avoid overwhelming the API
+                setTimeout(() => fetchPage(), 100);
+              } else {
+                observer.next(allResults);
+                observer.complete();
+              }
+            },
+            error: (error) => {
+              observer.error(error);
+            },
+          });
+      };
+
+      fetchPage();
+    });
+  }
+
+  /**
+   * Helper method to get nested object values by path
+   */
+  private getNestedValue(obj: any, path: string): any {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
   createAsset(file: File, fileName?: string): Observable<any> {
     const mutation = gql`
       mutation CreateAsset($data: AssetCreateInput!) {
@@ -168,63 +237,223 @@ export class GraphqlService {
 
   // Get all tags with their word items
   getTags(): Observable<Tag[]> {
-    const GET_TAGS = gql`
-      query GetTags {
-        tags {
-          id
-          tagName
-          createdAt
-          updatedAt
-          wordItem {
-            id
-            item
+    const getTagsQuery = (first: number, after?: string) => `
+      query GetTags($first: Int!, $after: String) {
+        tagsConnection(first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              tagName
+              createdAt
+              updatedAt
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
           }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ tags: Tag[] }>({
-        query: GET_TAGS,
-      })
-      .pipe(map((result) => result.data.tags));
+    return this.fetchAllWithCursor<Tag>(
+      getTagsQuery,
+      {},
+      'tagsConnection'
+    ).pipe(
+      switchMap(tags => {
+        // For each tag, get the word item count using nested pagination
+        const countObservables = tags.map(tag => 
+          this.getWordItemCountForTag(tag.id).pipe(
+            map(count => ({ ...tag, wordItemCount: count }))
+          )
+        );
+        
+        return forkJoin(countObservables);
+      }),
+      map(tagsWithCounts => 
+        tagsWithCounts.map(tag => ({
+          ...tag,
+          wordItem: Array(tag.wordItemCount || 0).fill({})
+        }))
+      )
+    );
+  }
+
+  private getWordItemCountForTag(tagId: string): Observable<number> {
+    // Use pagination to get all word items for accurate count
+    const getWordItemCountQuery = `
+      query GetWordItemCount($tagId: ID!, $first: Int!, $skip: Int!) {
+        tag(where: { id: $tagId }) {
+          wordItem(first: $first, skip: $skip) {
+            id
+          }
+        }
+      }
+    `;
+
+    return new Observable((observer) => {
+      let totalCount = 0;
+      let skip = 0;
+      const pageSize = 100; // Use the correct Hygraph limit
+      let hasMore = true;
+
+      const fetchPage = () => {
+        this.apollo
+          .query<any>({
+            query: gql`
+              ${getWordItemCountQuery}
+            `,
+            variables: { tagId, first: pageSize, skip },
+          })
+          .pipe(
+            map((result) => {
+              const wordItems = result.data?.tag?.wordItem || [];
+              return wordItems;
+            })
+          )
+          .subscribe({
+            next: (wordItems) => {
+              totalCount += wordItems.length;
+              
+              // If we got fewer items than requested, we've reached the end
+              if (wordItems.length < pageSize) {
+                hasMore = false;
+              } else {
+                skip += pageSize;
+              }
+
+              if (hasMore) {
+                fetchPage();
+              } else {
+                observer.next(totalCount);
+                observer.complete();
+              }
+            },
+            error: (error) => {
+              observer.error(error);
+            },
+          });
+      };
+
+      fetchPage();
+    });
+  }
+
+  private getCollectedWordItemCountForTag(tagId: string): Observable<number> {
+    // Use pagination to get all collected word items for accurate count
+    const getCollectedWordItemCountQuery = `
+      query GetCollectedWordItemCount($tagId: ID!, $first: Int!, $skip: Int!) {
+        tag(where: { id: $tagId }) {
+          wordItem(where: { isCollected: true }, first: $first, skip: $skip) {
+            id
+          }
+        }
+      }
+    `;
+
+    return new Observable((observer) => {
+      let totalCount = 0;
+      let skip = 0;
+      const pageSize = 100; // Use the correct Hygraph limit
+      let hasMore = true;
+
+      const fetchPage = () => {
+        this.apollo
+          .query<any>({
+            query: gql`
+              ${getCollectedWordItemCountQuery}
+            `,
+            variables: { tagId, first: pageSize, skip },
+          })
+          .pipe(
+            map((result) => {
+              const wordItems = result.data?.tag?.wordItem || [];
+              return wordItems;
+            })
+          )
+          .subscribe({
+            next: (wordItems) => {
+              totalCount += wordItems.length;
+              
+              // If we got fewer items than requested, we've reached the end
+              if (wordItems.length < pageSize) {
+                hasMore = false;
+              } else {
+                skip += pageSize;
+              }
+
+              if (hasMore) {
+                fetchPage();
+              } else {
+                observer.next(totalCount);
+                observer.complete();
+              }
+            },
+            error: (error) => {
+              observer.error(error);
+            },
+          });
+      };
+
+      fetchPage();
+    });
   }
 
   // Get all tags with their word items
   getCollectedTags(): Observable<Tag[]> {
-    const GET_TAGS = gql`
-      query GetTags {
-        tags {
-          id
-          tagName
-          createdAt
-          updatedAt
-          wordItem(where: { OR: [{ isKnown: false }, { isCollected: true }] }) {
-            id
-            item
-            isCollected
+    const getCollectedTagsQuery = (first: number, after?: string) => `
+      query GetCollectedTags($first: Int!, $after: String) {
+        tagsConnection(first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              tagName
+              createdAt
+              updatedAt
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
           }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ tags: Tag[] }>({
-        query: GET_TAGS,
-      })
-      .pipe(
-        map((result) =>
-          result.data.tags.filter((tag) => tag.wordItem.length > 0)
-        )
-      );
+    return this.fetchAllWithCursor<Tag>(
+      getCollectedTagsQuery,
+      {},
+      'tagsConnection'
+    ).pipe(
+      switchMap(tags => {
+        // For each tag, get the collected word item count using nested pagination
+        const countObservables = tags.map(tag => 
+          this.getCollectedWordItemCountForTag(tag.id).pipe(
+            map(count => ({ ...tag, wordItemCount: count }))
+          )
+        );
+        
+        return forkJoin(countObservables);
+      }),
+      map(tagsWithCounts => 
+        tagsWithCounts.map(tag => ({
+          ...tag,
+          wordItem: Array(tag.wordItemCount || 0).fill({})
+        }))
+      ),
+      map((tags) => tags.filter((tag) => tag.wordItem.length > 0))
+    );
   }
 
   // Get word items by tag
   getWordItemsByTag(tagId: string): Observable<WordItem[]> {
-    const GET_WORD_ITEMS_BY_TAG = gql`
-      query GetWordItemsByTag($tagId: ID!) {
+    const getWordItemsByTagQuery = (first: number, after?: string) => `
+      query GetWordItemsByTag($tagId: ID!, $first: Int!, $after: String) {
         tag(where: { id: $tagId }) {
-          wordItem {
+          wordItem(first: $first, after: $after) {
             id
             item
             meaning
@@ -251,20 +480,63 @@ export class GraphqlService {
       }
     `;
 
-    return this.apollo
-      .query<{ tag: { wordItem: WordItem[] } }>({
-        query: GET_WORD_ITEMS_BY_TAG,
-        variables: { tagId },
-      })
-      .pipe(map((result) => result.data.tag.wordItem));
+    // Use a custom pagination approach for single tag queries
+    return new Observable((observer) => {
+      let allWordItems: WordItem[] = [];
+      let after: string | undefined = undefined;
+      const pageSize = 100; // Use the correct Hygraph limit
+      let hasMore = true;
+
+      const fetchPage = () => {
+        this.apollo
+          .query<any>({
+            query: gql`
+              ${getWordItemsByTagQuery(pageSize, after)}
+            `,
+            variables: { tagId, first: pageSize, after },
+          })
+          .pipe(
+            map((result) => {
+              const wordItems = result.data?.tag?.wordItem || [];
+              return wordItems;
+            })
+          )
+          .subscribe({
+            next: (wordItems) => {
+              allWordItems = allWordItems.concat(wordItems);
+              
+              // If we got fewer items than requested, we've reached the end
+              if (wordItems.length < pageSize) {
+                hasMore = false;
+              } else {
+                // For cursor pagination, we need to get the cursor from the last item
+                // Since we're not using a connection, we'll use the ID as a simple approach
+                after = wordItems[wordItems.length - 1]?.id;
+              }
+
+              if (hasMore && after) {
+                fetchPage();
+              } else {
+                observer.next(allWordItems);
+                observer.complete();
+              }
+            },
+            error: (error) => {
+              observer.error(error);
+            },
+          });
+      };
+
+      fetchPage();
+    });
   }
 
   // Get word items by tag
   getCollectedWordItemsByTag(tagId: string): Observable<WordItem[]> {
-    const GET_WORD_ITEMS_BY_TAG = gql`
-      query GetWordItemsByTag($tagId: ID!) {
+    const getCollectedWordItemsByTagQuery = (first: number, after?: string) => `
+      query GetCollectedWordItemsByTag($tagId: ID!, $first: Int!, $after: String) {
         tag(where: { id: $tagId }) {
-          wordItem(where: { OR: [{ isKnown: false }, { isCollected: true }] }) {
+          wordItem(where: { isCollected: true }, first: $first, after: $after) {
             id
             item
             meaning
@@ -291,12 +563,55 @@ export class GraphqlService {
       }
     `;
 
-    return this.apollo
-      .query<{ tag: { wordItem: WordItem[] } }>({
-        query: GET_WORD_ITEMS_BY_TAG,
-        variables: { tagId },
-      })
-      .pipe(map((result) => result.data.tag.wordItem));
+    // Use a custom pagination approach for single tag queries
+    return new Observable((observer) => {
+      let allWordItems: WordItem[] = [];
+      let after: string | undefined = undefined;
+      const pageSize = 100; // Use the correct Hygraph limit
+      let hasMore = true;
+
+      const fetchPage = () => {
+        this.apollo
+          .query<any>({
+            query: gql`
+              ${getCollectedWordItemsByTagQuery(pageSize, after)}
+            `,
+            variables: { tagId, first: pageSize, after },
+          })
+          .pipe(
+            map((result) => {
+              const wordItems = result.data?.tag?.wordItem || [];
+              return wordItems;
+            })
+          )
+          .subscribe({
+            next: (wordItems) => {
+              allWordItems = allWordItems.concat(wordItems);
+              
+              // If we got fewer items than requested, we've reached the end
+              if (wordItems.length < pageSize) {
+                hasMore = false;
+              } else {
+                // For cursor pagination, we need to get the cursor from the last item
+                // Since we're not using a connection, we'll use the ID as a simple approach
+                after = wordItems[wordItems.length - 1]?.id;
+              }
+
+              if (hasMore && after) {
+                fetchPage();
+              } else {
+                observer.next(allWordItems);
+                observer.complete();
+              }
+            },
+            error: (error) => {
+              observer.error(error);
+            },
+          });
+      };
+
+      fetchPage();
+    });
   }
 
   updateWordViewTimestamp(
@@ -622,157 +937,187 @@ export class GraphqlService {
 
   // Category methods
   getCategories(): Observable<Category[]> {
-    const GET_CATEGORIES = gql`
-      query GetCategories {
-        categories {
-          id
-          categoryName
+    const getCategoriesQuery = (first: number, after?: string) => `
+      query GetCategories($first: Int!, $after: String) {
+        categoriesConnection(first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              categoryName
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ categories: Category[] }>({
-        query: GET_CATEGORIES,
-      })
-      .pipe(map((result) => result.data.categories));
+    return this.fetchAllWithCursor<Category>(
+      getCategoriesQuery,
+      {},
+      'categoriesConnection'
+    );
   }
 
   // Quiz methods
   getQuizzesByCategory(categoryId: string): Observable<Quiz[]> {
-    const GET_QUIZZES_BY_CATEGORY = gql`
-      query GetQuizzesByCategory($categoryId: ID!) {
-        category(where: { id: $categoryId }) {
-          categoryName
-          id
-          quiz {
-            id
-            quizContent
-            quizImages {
-              url
-            }
-            quizOptions {
-              ... on QuizOption {
-                quizOptionText
-                optionImage {
-                  url
+    const getQuizzesByCategoryQuery = (first: number, after?: string) => `
+      query GetQuizzesByCategory($categoryId: ID!, $first: Int!, $after: String) {
+        quizzesConnection(where: { category: { id: { equals: $categoryId } } }, first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              quizContent
+              quizImages {
+                url
+              }
+              quizOptions {
+                ... on QuizOption {
+                  quizOptionText
+                  optionImage {
+                    url
+                  }
                 }
               }
+              correctAnswer
+              isCollected
+              viewTime
             }
-            correctAnswer
-            isCollected
-            viewTime
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
           }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ category: { quiz: Quiz[] } }>({
-        query: GET_QUIZZES_BY_CATEGORY,
-        variables: { categoryId },
+    return this.fetchAllWithCursor<Quiz>(
+      getQuizzesByCategoryQuery,
+      { categoryId },
+      'quizzesConnection'
+    ).pipe(
+      map((quizzes) => {
+        if (!quizzes || quizzes.length === 0) {
+          throw new Error('No quizzes found for this category');
+        }
+        return quizzes.map((quiz) => ({
+          ...quiz,
+          // Ensure quizOptions is always an array and includes 'id'
+          quizOptions:
+            quiz.quizOptions?.map((option) => ({
+              id: option.id,
+              quizOptionText: option.quizOptionText,
+              optionImage: option.optionImage || undefined,
+            })) || [],
+        }));
       })
-      .pipe(
-        map((result) => {
-          if (!result.data?.category?.quiz) {
-            throw new Error('No quizzes found for this category');
-          }
-          return result.data.category.quiz.map((quiz) => ({
-            ...quiz,
-            // Ensure quizOptions is always an array and includes 'id'
-            quizOptions:
-              quiz.quizOptions?.map((option) => ({
-                id: option.id,
-                quizOptionText: option.quizOptionText,
-                optionImage: option.optionImage || undefined,
-              })) || [],
-          }));
-        })
-      );
+    );
   }
 
   getCategoriesWithIncorrectQuizzes(): Observable<CategoryWithQuizzes[]> {
-    const GET_CATEGORIES_WITH_QUIZZES = gql`
-      query GetCategoriesWithQuizzes {
-        categories {
-          id
-          categoryName
-          quiz {
-            id
-            correctAnswer
-            isCollected
-            viewTime
-            quizContent
-            quizImages {
-              url
-            }
-            quizOptions {
-              ... on QuizOption {
-                quizOptionText
-                optionImage {
+    const getCategoriesWithQuizzesQuery = (first: number, after?: string) => `
+      query GetCategoriesWithQuizzes($first: Int!, $after: String) {
+        categoriesConnection(first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              categoryName
+              quiz {
+                id
+                correctAnswer
+                isCollected
+                viewTime
+                quizContent
+                quizImages {
                   url
+                }
+                quizOptions {
+                  ... on QuizOption {
+                    quizOptionText
+                    optionImage {
+                      url
+                    }
+                  }
                 }
               }
             }
           }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ categories: CategoryWithQuizzes[] }>({
-        query: GET_CATEGORIES_WITH_QUIZZES,
-        fetchPolicy: 'no-cache', // Bypass cache
+    return this.fetchAllWithCursor<CategoryWithQuizzes>(
+      getCategoriesWithQuizzesQuery,
+      {},
+      'categoriesConnection'
+    ).pipe(
+      map((categories) => {
+        return categories.map((category) => ({
+          ...category,
+          quiz:
+            category.quiz
+              ?.map((quiz) => ({
+                ...quiz,
+                isCollected: quiz.isCollected ?? false, // Default to false if null
+                quizOptions: quiz.quizOptions || [],
+              }))
+              .filter((quiz) => quiz.isCollected) || [],
+        }));
+      }),
+      catchError((error) => {
+        console.error('Error fetching categories:', error);
+        return of([]);
       })
-      .pipe(
-        map((result) => {
-          return result.data.categories.map((category) => ({
-            ...category,
-            quiz:
-              category.quiz
-                ?.map((quiz) => ({
-                  ...quiz,
-                  isCollected: quiz.isCollected ?? false, // Default to false if null
-                  quizOptions: quiz.quizOptions || [],
-                }))
-                .filter((quiz) => quiz.isCollected) || [],
-          }));
-        }),
-        catchError((error) => {
-          console.error('Error fetching categories:', error);
-          return of([]);
-        })
-      );
+    );
   }
 
   getIncorrectQuizzes(): Observable<Quiz[]> {
-    const GET_INCORRECT_QUIZZES = gql`
-      query GetIncorrectQuizzes {
-        quizzes(where: { isCollected: true }) {
-          id
-          quizContent
-          correctAnswer
-          quizOptions {
-            ... on QuizOption {
-              quizOptionText
-              optionImage {
-                url
+    const getIncorrectQuizzesQuery = (first: number, after?: string) => `
+      query GetIncorrectQuizzes($first: Int!, $after: String) {
+        quizzesConnection(where: { isCollected: true }, first: $first, after: $after) {
+          edges {
+            cursor
+            node {
+              id
+              quizContent
+              correctAnswer
+              quizOptions {
+                ... on QuizOption {
+                  quizOptionText
+                  optionImage {
+                    url
+                  }
+                }
+              }
+              category {
+                id
+                categoryName
               }
             }
           }
-          category {
-            id
-            categoryName
+          pageInfo {
+            hasNextPage
+            endCursor
           }
         }
       }
     `;
 
-    return this.apollo
-      .query<{ quizzes: Quiz[] }>({
-        query: GET_INCORRECT_QUIZZES,
-      })
-      .pipe(map((result) => result.data.quizzes));
+    return this.fetchAllWithCursor<Quiz>(
+      getIncorrectQuizzesQuery,
+      {},
+      'quizzesConnection'
+    );
   }
 
   createCategory(categoryName: string): Observable<Category> {
