@@ -1,0 +1,63 @@
+/* Mobile menu animations */
+.mobile-menu-enter {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.mobile-menu-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease-in-out, transform 200ms ease-in-out;
+}
+
+/* Ensure mobile menu is properly positioned */
+@media (max-width: 768px) {
+  nav {
+    position: relative;
+  }
+  
+  /* Mobile menu container */
+  .mobile-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 40;
+  }
+}
+
+/* Smooth transitions for all interactive elements */
+button, a {
+  transition: all 0.2s ease-in-out;
+}
+
+/* Focus states for accessibility */
+button:focus, a:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Active state for mobile menu items */
+.router-link-active {
+  background-color: #eff6ff;
+  color: #2563eb;
+  border-left: 4px solid #2563eb;
+}
+
+/* Hover effects for mobile menu items */
+.mobile-menu a:hover {
+  background-color: #f9fafb;
+  color: #2563eb;
+}
+
+/* Ensure proper spacing on very small screens */
+@media (max-width: 480px) {
+  .px-2 {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  
+  .text-base {
+    font-size: 1rem;
+  }
+}
